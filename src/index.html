@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#16261c" />
+    <meta name="description" content="Measure the area of your garden by walking its edge with your phone's GPS, or by drawing it on a satellite map." />
+    <title>Garden Size</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="map" aria-label="Map"></div>
+
+    <button id="locate-btn" class="fab" title="Centre on my location" aria-label="Centre on my location">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3" stroke="currentColor" stroke-width="2"/></svg>
+    </button>
+
+    <button id="imagery-btn" class="fab fab-2" title="Imagery dates: find older photos, e.g. winter without leaves" aria-label="Choose imagery date">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="15.5" r="2.2" fill="currentColor"/></svg>
+    </button>
+
+    <div id="imagery-bar" hidden>
+      <button id="img-older" title="Older imagery" aria-label="Older imagery">◀</button>
+      <select id="img-select" aria-label="Imagery date"></select>
+      <button id="img-newer" title="Newer imagery" aria-label="Newer imagery">▶</button>
+      <button id="img-close" title="Back to latest imagery" aria-label="Close imagery dates">✕</button>
+    </div>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <section id="panel">
+      <div class="stats">
+        <div class="area-label" id="area-label" hidden></div>
+        <div class="area-main" id="area-main">—</div>
+        <div class="area-sub" id="area-sub">Walk or draw your garden's edge</div>
+        <div class="meta">
+          <span id="perimeter">Perimeter —</span>
+          <span class="dot">·</span>
+          <span id="point-count">0 points</span>
+          <span id="uncertainty" class="uncertainty"></span>
+        </div>
+        <div id="warning" class="warning" hidden></div>
+      </div>
+
+      <div class="areas">
+        <ul id="area-list" aria-label="Areas"></ul>
+        <button id="add-area-btn" class="add-area">＋ New area</button>
+      </div>
+
+      <div class="modes" role="tablist">
+        <button class="mode" data-mode="walk" role="tab" aria-selected="false">🚶 Walk the edge</button>
+        <button class="mode" data-mode="draw" role="tab" aria-selected="false">✏️ Draw on map</button>
+      </div>
+
+      <div id="walk-controls" class="controls" hidden>
+        <div id="gps-status" class="gps-status">GPS off</div>
+        <div class="row">
+          <button id="corner-btn" class="primary">📍 Mark corner</button>
+          <button id="trace-btn">〰️ Start tracing</button>
+        </div>
+        <p class="hint">
+          <strong>Straight edges:</strong> stand on each corner and tap <em>Mark corner</em> (averages 5&nbsp;s of GPS).
+          <strong>Curvy edges:</strong> tap <em>Start tracing</em> and walk slowly along the edge.
+          You can mix both, and drag points afterwards to fix them against the satellite image.
+          Points go into the selected area.
+        </p>
+      </div>
+
+      <div id="draw-controls" class="controls" hidden>
+        <p class="hint">
+          Tap the map to add corners to the selected area. Drag a point to move it, drag a small
+          midpoint to insert one, double-tap a point to delete it.
+        </p>
+        <p class="hint">
+          <strong>Trees hiding the boundary?</strong> Tap the 🗓 button on the map to flip through older
+          photos. Winter ones (🍂) often show fences and hedges under bare trees.
+        </p>
+      </div>
+
+      <div class="row actions">
+        <button id="undo-btn" title="Undo (Ctrl+Z / ⌘Z)">↶ Undo</button>
+        <button id="clear-btn">✕ Clear all</button>
+        <button id="export-btn">⇩ GeoJSON</button>
+      </div>
+
+      <div class="row save-row">
+        <input id="name-input" type="text" placeholder="Name this garden" maxlength="60" />
+        <button id="save-btn">💾 Save</button>
+      </div>
+
+      <details id="saved">
+        <summary>Saved gardens (<span id="saved-count">0</span>)</summary>
+        <ul id="saved-list"></ul>
+      </details>
+
+      <div class="row footer">
+        <label>Units
+          <select id="units">
+            <option value="metric">Metric (m²)</option>
+            <option value="imperial">Imperial (ft²)</option>
+          </select>
+        </label>
+        <span class="muted">Data stays on this device.</span>
+      </div>
+    </section>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
