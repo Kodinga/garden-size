@@ -26,6 +26,15 @@ test('normalizeAreas: keeps areas, drops junk, fills defaults', () => {
   assert.equal(areas[1].color, null);
 });
 
+test('normalizeAreas: keeps a valid cadastre parcel tag, drops a broken one', () => {
+  const [a, b] = normalizeAreas([
+    { name: 'Parcelle BY 88', vertices: [], parcel: { id: '78646000BY0088', label: 'BY 88', commune: 'Versailles', contenance: 301, junk: 1 } },
+    { name: 'x', vertices: [], parcel: { label: 'no id' } },
+  ]);
+  assert.deepEqual(a.parcel, { id: '78646000BY0088', label: 'BY 88', commune: 'Versailles', contenance: 301 });
+  assert.equal('parcel' in b, false);
+});
+
 test('normalizeAreas: non-array input gives empty list', () => {
   assert.deepEqual(normalizeAreas(undefined), []);
   assert.deepEqual(normalizeAreas({}), []);

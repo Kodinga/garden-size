@@ -11,6 +11,8 @@ import {
 import { GpsTracker } from './gps.js';
 import { detectPlatform, locationHelp } from './location-help.js';
 import { findLocalReleases, loadCaptureInfo, describeCapture, captureKey } from './wayback.js';
+import { CADASTRE_TILE_URL, IGN_ORTHO_TILE_URL, IGN_ATTRIBUTION, inFrance, parcelAt } from './cadastre.js';
+import { detectLang, setLang, getLang, numberLocale, t, applyStatic } from './i18n.js';
 import { loadDraft, saveDraft, loadSaved, storeSaved, loadPrefs, savePrefs, newId } from './storage.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,28 +22,42 @@ const TRACE_MAX_ACCURACY = 15; // metres; fixes worse than this are ignored whil
 const SIMPLIFY_TOLERANCE = 0.75; // metres
 const MAX_UNDO = 100;
 const PALETTE = ['#ffd54a', '#4fc3f7', '#81c784', '#f48fb1', '#ffb74d', '#ce93d8', '#80cbc4', '#e6ee9c'];
+const CLICK_MODES = ['draw', 'parcel']; // modes where a map tap does something
+
+// ---------- Language ----------
+const prefs = loadPrefs();
+setLang(detectLang({ search: location.search, saved: prefs.lang, navigatorLanguages: navigator.languages ?? [navigator.language] }));
+document.documentElement.lang = getLang();
+document.title = t('app.title');
+document.querySelector('meta[name="description"]')?.setAttribute('content', t('app.description'));
+applyStatic();
+$('area-list').setAttribute('aria-label', t('areas.aria'));
+
+const fmtArea = (m2) => formatArea(m2, state.units, numberLocale());
+const fmtLength = (m) => formatLength(m, state.units, numberLocale());
+const fmtDate = (ms, opts) => new Date(ms).toLocaleDateString(getLang(), opts);
 
 // ---------- State ----------
 // An outline is a list of areas; points are added to the active one.
-const prefs = loadPrefs();
 const draft = loadDraft();
 const state = {
-  areas: draft.areas, // [{ id, name, color, subtract, vertices: [{ lat, lng, acc? }] }]
+  areas: draft.areas, // [{ id, name, color, subtract, vertices: [{ lat, lng, acc? }], parcel? }]
   activeId: draft.activeId,
   history: [], // snapshots of { areas, activeId } for undo
-  mode: null, // 'walk' | 'draw' | null
+  mode: null, // 'walk' | 'draw' | 'parcel' | null
   units: prefs.units === 'imperial' ? 'imperial' : 'metric',
   tracing: false,
   trace: [],
   sampling: false,
   centredOnFix: false,
+  warnedApproximate: false,
 };
 
 function nextName() {
   const used = new Set(state.areas.map((a) => a.name));
   let n = 1;
-  while (used.has(`Area ${n}`)) n++;
-  return `Area ${n}`;
+  while (used.has(t('area.default', { n }))) n++;
+  return t('area.default', { n });
 }
 function nextColor() {
   const used = new Set(state.areas.map((a) => a.color));
@@ -55,10 +71,8 @@ if (!state.areas.some((a) => a.id === state.activeId)) state.activeId = state.ar
 
 const active = () => state.areas.find((a) => a.id === state.activeId);
 const clone = (pts) => pts.map((p) => ({ ...p }));
-const snapshot = () => ({
-  activeId: state.activeId,
-  areas: state.areas.map((a) => ({ ...a, vertices: clone(a.vertices) })),
-});
+const cloneArea = (a) => ({ ...a, vertices: clone(a.vertices), ...(a.parcel ? { parcel: { ...a.parcel } } : {}) });
+const snapshot = () => ({ activeId: state.activeId, areas: state.areas.map(cloneArea) });
 const allVertices = () => state.areas.flatMap((a) => a.vertices);
 
 function persist() {
@@ -75,26 +89,49 @@ function commit(mutate) {
   persist();
   render();
 }
-const setActiveVertices = (next) => commit(() => (active().vertices = next));
+/** Replace the active area's outline. A hand-edited outline is no longer the official parcel. */
+const setActiveVertices = (next) =>
+  commit(() => {
+    const a = active();
+    a.vertices = next;
+    delete a.parcel;
+  });
 
 /** Active area's vertices plus the in-progress trace, used for live display. */
 const livePoints = () => (state.tracing ? [...active().vertices, ...state.trace] : active().vertices);
 
 // ---------- Map ----------
-const map = L.map('map', { zoomControl: false, maxZoom: 22 }).setView([30, 0], 2);
+const startsInFrance = getLang() === 'fr';
+const map = L.map('map', { zoomControl: false, maxZoom: 22 }).setView(startsInFrance ? [46.6, 2.4] : [30, 0], startsInFrance ? 6 : 2);
 L.control.zoom({ position: 'topright' }).addTo(map);
 
 const satellite = L.tileLayer(
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   { maxZoom: 22, maxNativeZoom: 19, attribution: 'Imagery © Esri, Maxar, Earthstar Geographics' },
 );
+const ignOrtho = L.tileLayer(IGN_ORTHO_TILE_URL, { maxZoom: 22, maxNativeZoom: 19, attribution: IGN_ATTRIBUTION });
 const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 22,
   maxNativeZoom: 19,
   attribution: '© OpenStreetMap contributors',
 });
+// Parcel boundaries (France). Drawn above the photos, below our outlines.
+const cadastre = L.tileLayer(CADASTRE_TILE_URL, {
+  maxZoom: 22,
+  maxNativeZoom: 19,
+  minZoom: 14,
+  zIndex: 10,
+  opacity: 0.9,
+  attribution: `Cadastre ${IGN_ATTRIBUTION}`,
+});
 satellite.addTo(map);
-L.control.layers({ Satellite: satellite, Streets: streets }, null, { position: 'topright' }).addTo(map);
+L.control
+  .layers(
+    { [t('layer.satellite')]: satellite, [t('layer.ign')]: ignOrtho, [t('layer.streets')]: streets },
+    { [t('layer.cadastre')]: cadastre },
+    { position: 'topright' },
+  )
+  .addTo(map);
 L.control.scale({ imperial: true, metric: true, position: 'bottomleft' }).addTo(map);
 
 const shapes = new Map(); // area id -> L.polygon
@@ -161,7 +198,7 @@ function addArea() {
     state.areas.push(created);
     state.activeId = created.id;
   });
-  toast(`${created.name} added — ${state.mode === 'walk' ? 'mark its corners' : 'tap the map to draw it'}`);
+  toast(t('area.added', { name: created.name, mode: state.mode }));
   if (!state.mode) setMode('draw');
 }
 
@@ -170,6 +207,7 @@ function deleteArea(id) {
   commit(() => {
     if (state.areas.length === 1) {
       state.areas[0].vertices = [];
+      delete state.areas[0].parcel;
       return;
     }
     const idx = state.areas.findIndex((a) => a.id === id);
@@ -204,9 +242,9 @@ function syncShapes(live) {
     if (!poly) {
       const id = a.id;
       poly = L.polygon([], {}).addTo(map);
-      // Outside draw mode, tapping an area selects it. In draw mode the click
-      // falls through to the map so you can draw an area inside another one.
-      poly.on('click', () => state.mode !== 'draw' && selectArea(id));
+      // Outside draw/parcel mode, tapping an area selects it. In those modes the
+      // click falls through to the map (draw inside another area, pick a parcel).
+      poly.on('click', () => !CLICK_MODES.includes(state.mode) && selectArea(id));
       shapes.set(id, poly);
     }
     const isActive = a.id === state.activeId;
@@ -215,7 +253,7 @@ function syncShapes(live) {
     poly.setStyle(shapeStyle(a, isActive));
 
     if (showLabels && pts.length >= 3) {
-      const text = `${a.subtract ? '− ' : ''}${a.name} · ${formatArea(polygonArea(pts), state.units).main}`;
+      const text = `${a.subtract ? '− ' : ''}${a.name} · ${fmtArea(polygonArea(pts)).main}`;
       if (poly.getTooltip()) poly.setTooltipContent(text);
       else poly.bindTooltip(text, { permanent: true, direction: 'center', className: 'area-label-tip' });
       poly.openTooltip();
@@ -250,10 +288,10 @@ function renderAreaList() {
     name.className = 'area-name';
     name.value = a.name;
     name.maxLength = 40;
-    name.setAttribute('aria-label', 'Area name');
+    name.setAttribute('aria-label', t('area.nameAria'));
     name.addEventListener('focus', () => selectArea(a.id));
     name.addEventListener('input', () => {
-      a.name = name.value.trim() || 'Untitled';
+      a.name = name.value.trim() || t('area.untitled');
       persist();
       updateStats();
     });
@@ -264,7 +302,7 @@ function renderAreaList() {
     const sub = document.createElement('button');
     sub.className = 'icon-btn';
     sub.textContent = a.subtract ? '−' : '+';
-    sub.title = a.subtract ? 'Subtracted from total (e.g. shed, patio). Tap to add instead.' : 'Added to total. Tap to subtract it instead (e.g. shed, patio).';
+    sub.title = a.subtract ? t('area.subtracted') : t('area.counted');
     sub.setAttribute('aria-label', sub.title);
     sub.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -275,9 +313,9 @@ function renderAreaList() {
     const del = document.createElement('button');
     del.className = 'icon-btn';
     del.textContent = '🗑';
-    del.title = state.areas.length === 1 ? 'Clear this area' : 'Delete this area';
+    del.title = state.areas.length === 1 ? t('area.clear') : t('area.delete');
     del.setAttribute('aria-label', del.title);
-    confirmable(del, '🗑', 'Sure?', () => deleteArea(a.id));
+    confirmable(del, '🗑', t('sure'), () => deleteArea(a.id));
 
     li.append(swatch, name, value, sub, del);
     ul.append(li);
@@ -294,40 +332,39 @@ function updateStats() {
   const sum = summarizeAreas(areas);
   const measured = areas.filter((a) => a.vertices.length >= 3);
   const actStats = sum.items[state.areas.indexOf(act)];
-  const f = formatArea(sum.total, state.units);
+  const f = fmtArea(sum.total);
 
   const label = $('area-label');
   label.hidden = measured.length < 2;
-  label.textContent = `Total of ${measured.length} areas`;
+  label.textContent = t('stats.total', { n: measured.length });
 
   $('area-main').textContent = measured.length ? f.main : '—';
   $('area-sub').textContent = measured.length
     ? f.sub
     : live.length
-      ? `Add ${3 - live.length} more point${live.length === 2 ? '' : 's'}`
-      : "Walk or draw your garden's edge";
+      ? t('stats.more', { n: 3 - live.length })
+      : t('start.hint');
 
-  $('perimeter').textContent = `${act.name}: perimeter ${live.length >= 2 ? formatLength(actStats.perimeter, state.units) : '—'}`;
-  $('point-count').textContent = `${live.length} point${live.length === 1 ? '' : 's'}`;
+  $('perimeter').textContent = t('stats.perimeter', { name: act.name, p: live.length >= 2 ? fmtLength(actStats.perimeter) : '—' });
+  $('point-count').textContent = t('stats.points', { n: live.length });
+  $('cadastre-info').textContent = Number.isFinite(act.parcel?.contenance)
+    ? t('stats.cadastre', { a: fmtArea(act.parcel.contenance).main })
+    : '';
 
   $('uncertainty').textContent =
-    sum.uncertainty && sum.total > 0
-      ? `GPS uncertainty ≈ ±${formatArea(sum.uncertainty, state.units).main} — drag points onto the imagery to refine`
-      : '';
+    sum.uncertainty && sum.total > 0 ? t('stats.uncertainty', { a: fmtArea(sum.uncertainty).main }) : '';
 
   const tangled = areas.filter((a) => isSelfIntersecting(a.vertices)).map((a) => a.name);
   const warn = $('warning');
   warn.hidden = !tangled.length;
-  if (tangled.length) {
-    warn.textContent = `${tangled.join(', ')} ${tangled.length > 1 ? 'cross themselves' : 'crosses itself'}, so its area is wrong. Drag or delete points to untangle it.`;
-  }
+  if (tangled.length) warn.textContent = t('stats.tangled', { names: tangled.join(', '), n: tangled.length });
 
   // Per-area figures in the list (updated in place so typing a name keeps focus).
   for (const li of $('area-list').children) {
     const i = state.areas.findIndex((a) => a.id === li.dataset.id);
     const pts = areas[i]?.vertices ?? [];
     const v = li.querySelector('.area-value');
-    if (v) v.textContent = pts.length >= 3 ? formatArea(sum.items[i].area, state.units).main : `${pts.length} pts`;
+    if (v) v.textContent = pts.length >= 3 ? fmtArea(sum.items[i].area).main : t('stats.pts', { n: pts.length });
   }
 
   const empty = !allVertices().length && !state.trace.length;
@@ -342,6 +379,9 @@ function renderHandles() {
   const act = active();
   const v = act.vertices;
 
+  // Editing an outline makes it hand-drawn: drop the "official parcel" tag.
+  const markEdited = () => delete act.parcel;
+
   v.forEach((p, i) => {
     const m = L.marker([p.lat, p.lng], { icon: vertexIcon(act.color, i === 0), draggable: true, autoPan: true });
     let before;
@@ -353,6 +393,7 @@ function renderHandles() {
     });
     m.on('dragend', () => {
       pushHistory(before);
+      markEdited();
       persist();
       render();
     });
@@ -382,6 +423,7 @@ function renderHandles() {
       });
       mid.on('dragend', () => {
         pushHistory(before);
+        markEdited();
         persist();
         render();
       });
@@ -422,6 +464,8 @@ function setGpsStatus(text, quality = '') {
   el.className = `gps-status ${quality}`;
 }
 
+const APPROXIMATE_ACCURACY = 500; // metres; worse than this means "Precise Location" is off
+
 const gps = new GpsTracker({
   onFix(fix) {
     const ll = [fix.lat, fix.lng];
@@ -430,7 +474,7 @@ const gps = new GpsTracker({
 
     if (fix.acc > APPROXIMATE_ACCURACY) {
       // Hundreds of metres: the OS is only giving "approximate" location.
-      setGpsStatus(`Approximate location only (±${Math.round(fix.acc)} m) — Precise Location is off`, 'poor');
+      setGpsStatus(t('gps.approx', { acc: Math.round(fix.acc) }), 'poor');
       showLocationHelpButton('approximate');
       if (!state.warnedApproximate) {
         state.warnedApproximate = true;
@@ -438,8 +482,8 @@ const gps = new GpsTracker({
       }
     } else {
       const quality = fix.acc <= 5 ? 'good' : fix.acc <= 12 ? 'ok' : 'poor';
-      const label = quality === 'good' ? 'good' : quality === 'ok' ? 'fair' : 'poor — wait or move into the open';
-      setGpsStatus(`GPS ±${fix.acc.toFixed(1)} m (${label})`, quality);
+      const label = t(quality === 'good' ? 'gps.good' : quality === 'ok' ? 'gps.fair' : 'gps.poor');
+      setGpsStatus(t('gps.status', { acc: fix.acc.toLocaleString(numberLocale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 }), label }), quality);
       $('loc-help-btn').hidden = true;
     }
 
@@ -459,16 +503,13 @@ const gps = new GpsTracker({
   },
   onError(err) {
     if (err.code === 1) {
-      setGpsStatus('Location is blocked for this site', 'poor');
+      setGpsStatus(t('gps.blocked'), 'poor');
       showLocationHelpButton('denied');
       openLocationHelp('denied');
       return;
     }
-    const messages = {
-      2: 'Location unavailable. Check location is switched on, and try outdoors.',
-      3: 'Waiting for GPS…',
-    };
-    const msg = messages[err.code] ?? err.message;
+    const msg =
+      err.code === 2 ? t('gps.unavailable') : err.code === 3 ? t('gps.waiting') : err.code === 'unsupported' ? t('gps.unsupported') : err.message;
     setGpsStatus(msg, 'poor');
     if (err.code !== 3) toast(msg, 5000);
   },
@@ -477,26 +518,22 @@ const gps = new GpsTracker({
 // ---------- Location help ----------
 // Once a site is denied location, browsers never ask again; the user has to
 // find the switch in OS/browser settings. Show steps for their device.
-const APPROXIMATE_ACCURACY = 500; // metres; worse than this means "Precise Location" is off
 const helpDialog = $('loc-help');
 let helpReason = 'denied';
 
 function showLocationHelpButton(reason) {
   helpReason = reason;
   const btn = $('loc-help-btn');
-  btn.textContent = reason === 'approximate' ? 'How do I turn on precise location?' : 'How do I allow location?';
+  btn.textContent = reason === 'approximate' ? t('help.btnApprox') : t('help.btnDenied');
   btn.hidden = false;
 }
 
 function openLocationHelp(reason = helpReason) {
   helpReason = reason;
   const p = detectPlatform(navigator.userAgent, navigator.maxTouchPoints, navigator.platform);
-  const help = locationHelp(p, location.host || 'this site');
-  $('loc-help-title').textContent = reason === 'approximate' ? 'Precise location is off' : 'Location is blocked';
-  $('loc-help-sub').textContent =
-    reason === 'approximate'
-      ? `Your phone is only sharing an approximate position, which is far too rough to measure a garden. Steps for ${help.title}:`
-      : `Your browser has blocked location for this site and won't ask again by itself. Steps for ${help.title}:`;
+  const help = locationHelp(p, location.host || 'this site', getLang());
+  $('loc-help-title').textContent = reason === 'approximate' ? t('help.titleApprox') : t('help.titleDenied');
+  $('loc-help-sub').textContent = reason === 'approximate' ? t('help.subApprox', { p: help.title }) : t('help.subDenied', { p: help.title });
   // Steps are static strings from location-help.js (only <b> markup), not user input.
   $('loc-help-steps').innerHTML = help.steps.map((s) => `<li>${s}</li>`).join('');
   if (helpDialog.open) return;
@@ -518,7 +555,7 @@ $('loc-retry').addEventListener('click', () => {
   if (state.mode === 'walk') {
     gps.stop();
     state.centredOnFix = false;
-    setGpsStatus('Starting GPS…');
+    setGpsStatus(t('gps.starting'));
     gps.start();
   } else {
     $('locate-btn').click();
@@ -528,23 +565,23 @@ $('loc-retry').addEventListener('click', () => {
 function startTracing() {
   state.tracing = true;
   state.trace = [];
-  $('trace-btn').textContent = '■ Stop tracing';
+  $('trace-btn').textContent = t('walk.traceStop');
   $('trace-btn').classList.add('recording');
   renderHandles();
-  toast(`Tracing ${active().name} — walk slowly along the edge`);
+  toast(t('trace.toast', { name: active().name }));
 }
 
 function stopTracing() {
   if (!state.tracing) return;
   state.tracing = false;
-  $('trace-btn').textContent = '〰️ Start tracing';
+  $('trace-btn').textContent = t('walk.traceStart');
   $('trace-btn').classList.remove('recording');
   const simplified = simplify(state.trace, SIMPLIFY_TOLERANCE);
   const raw = state.trace.length;
   state.trace = [];
   if (simplified.length) {
     setActiveVertices([...active().vertices, ...simplified]);
-    toast(`Added ${simplified.length} points (from ${raw} GPS fixes)`);
+    toast(t('trace.added', { n: simplified.length, raw }));
   } else {
     render();
   }
@@ -559,18 +596,70 @@ async function markCorner() {
   btn.disabled = true;
   try {
     const avg = await gps.sample(CORNER_SAMPLE_MS, (remaining, count) => {
-      btn.textContent = `Hold still… ${Math.ceil(remaining / 1000)}s (${count})`;
+      btn.textContent = t('corner.hold', { s: Math.ceil(remaining / 1000), n: count });
     });
     const target = state.areas.find((a) => a.id === targetId) ?? active();
-    commit(() => target.vertices.push({ lat: avg.lat, lng: avg.lng, acc: avg.acc }));
-    if (avg.acc > 15) toast(`Corner added but GPS is weak (±${avg.acc.toFixed(0)} m). Drag it to fix.`, 5000);
-    else toast(`${target.name}: corner ${target.vertices.length} added (±${avg.acc.toFixed(1)} m, ${avg.samples} readings)`);
+    commit(() => {
+      target.vertices.push({ lat: avg.lat, lng: avg.lng, acc: avg.acc });
+      delete target.parcel;
+    });
+    const acc1 = avg.acc.toLocaleString(numberLocale(), { maximumFractionDigits: 1 });
+    if (avg.acc > 15) toast(t('corner.weak', { acc: Math.round(avg.acc) }), 5000);
+    else toast(t('corner.added', { name: target.name, n: target.vertices.length, acc: acc1, k: avg.samples }));
   } catch (err) {
-    toast(err.message, 5000);
+    toast(err.code === 'no-fix' ? t('gps.noFix') : err.message, 5000);
   } finally {
     state.sampling = false;
     btn.disabled = false;
-    btn.textContent = '📍 Mark corner';
+    btn.textContent = t('walk.corner');
+  }
+}
+
+// ---------- Cadastre / parcel mode (France) ----------
+// Tap a parcel: its official outline (IGN Parcellaire Express) becomes an area.
+let parcelLoading = false;
+
+/** Offer the parcel mode when the UI is French or the map is over France. */
+function updateParcelAvailability() {
+  const c = map.getCenter();
+  const available = getLang() === 'fr' || inFrance(c.lat, c.lng);
+  document.querySelector('.mode[data-mode="parcel"]').hidden = !available;
+  if (!available && state.mode === 'parcel') setMode(null);
+}
+
+async function pickParcel(latlng) {
+  if (parcelLoading) return;
+  if (!inFrance(latlng.lat, latlng.lng)) return toast(t('parcel.outside'), 4000);
+  if (map.getZoom() < 16) return toast(t('parcel.zoomIn'), 3000);
+  parcelLoading = true;
+  toast(t('parcel.loading'), 10000);
+  try {
+    const parcel = await parcelAt(latlng.lat, latlng.lng);
+    if (!parcel) return toast(t('parcel.none'), 4000);
+
+    const existing = state.areas.find((a) => a.parcel?.id === parcel.id);
+    if (existing) {
+      selectArea(existing.id);
+      return toast(t('parcel.already', { name: existing.name }));
+    }
+    const info = { id: parcel.id, label: parcel.label, commune: parcel.commune, contenance: parcel.contenance };
+    const name = t('parcel.name', { label: parcel.label });
+    commit(() => {
+      // Fill the active area if it is still empty, otherwise add a new one.
+      let target = active();
+      if (target.vertices.length) {
+        target = newArea();
+        state.areas.push(target);
+      }
+      Object.assign(target, { name, vertices: parcel.vertices, parcel: info });
+      state.activeId = target.id;
+    });
+    const official = Number.isFinite(parcel.contenance) ? fmtArea(parcel.contenance).main : '—';
+    toast(t('parcel.added', { label: parcel.label, commune: parcel.commune, area: official }), 5000);
+  } catch (err) {
+    toast(t('parcel.error', { msg: err.message }), 5000);
+  } finally {
+    parcelLoading = false;
   }
 }
 
@@ -583,31 +672,35 @@ function setMode(mode) {
     keepAwake(false);
     youDot.remove();
     youAccuracy.remove();
-    setGpsStatus('GPS off');
+    setGpsStatus(t('gps.off'));
   }
   state.mode = mode;
 
   document.querySelectorAll('.mode').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === mode)));
   $('walk-controls').hidden = mode !== 'walk';
   $('draw-controls').hidden = mode !== 'draw';
+  $('parcel-controls').hidden = mode !== 'parcel';
 
-  if (mode === 'draw') map.doubleClickZoom.disable();
+  if (CLICK_MODES.includes(mode)) map.doubleClickZoom.disable();
   else map.doubleClickZoom.enable();
 
+  if (mode === 'parcel') {
+    cadastre.addTo(map); // show the parcel lines (also toggleable in the layer menu)
+    if (map.getZoom() < 16) toast(t('parcel.zoomIn'), 3000);
+  }
+
   if (mode === 'walk') {
-    if (!window.isSecureContext) {
-      toast('GPS needs HTTPS (or localhost). Open this page over https://', 6000);
-    }
+    if (!window.isSecureContext) toast(t('gps.https'), 6000);
     state.centredOnFix = false;
-    setGpsStatus('Starting GPS…');
+    setGpsStatus(t('gps.starting'));
     gps.start();
     keepAwake(true);
   }
 }
 
 map.on('click', (e) => {
-  if (state.mode !== 'draw') return;
-  setActiveVertices([...active().vertices, { lat: e.latlng.lat, lng: e.latlng.lng }]);
+  if (state.mode === 'draw') setActiveVertices([...active().vertices, { lat: e.latlng.lat, lng: e.latlng.lng }]);
+  else if (state.mode === 'parcel') pickParcel(e.latlng);
 });
 
 // ---------- Saved gardens ----------
@@ -626,16 +719,18 @@ function renderSaved() {
     const sub = document.createElement('span');
     sub.className = 'sub';
     const n = g.areas.filter((a) => a.vertices.length >= 3).length;
-    sub.textContent = `${formatArea(summarizeAreas(g.areas).total, state.units).main}${n > 1 ? ` · ${n} areas` : ''} · ${new Date(g.savedAt).toLocaleDateString()}`;
+    sub.textContent = [fmtArea(summarizeAreas(g.areas).total).main, n > 1 ? t('saved.areas', { n }) : null, fmtDate(g.savedAt)]
+      .filter(Boolean)
+      .join(' · ');
     info.append(name, sub);
 
     const load = document.createElement('button');
-    load.textContent = 'Open';
+    load.textContent = t('saved.open');
     load.addEventListener('click', () => {
       if (!g.areas.length) return;
       stopTracing();
       commit(() => {
-        state.areas = g.areas.map((a) => ({ ...a, vertices: clone(a.vertices) }));
+        state.areas = g.areas.map(cloneArea);
         for (const a of state.areas) if (!a.color) a.color = nextColor();
         state.activeId = state.areas[0].id;
       });
@@ -644,8 +739,8 @@ function renderSaved() {
     });
     const del = document.createElement('button');
     del.textContent = '🗑';
-    del.title = 'Delete';
-    confirmable(del, '🗑', 'Sure?', () => {
+    del.title = t('saved.delete');
+    confirmable(del, '🗑', t('sure'), () => {
       storeSaved(loadSaved().filter((x) => x.id !== g.id));
       renderSaved();
     });
@@ -676,6 +771,7 @@ function undo() {
 }
 
 $('undo-btn').addEventListener('click', undo);
+$('undo-btn').title = t('undo.title');
 
 // Ctrl+Z (⌘Z on Mac) undoes the last map edit. Inside text fields the
 // browser's own text undo is left alone.
@@ -684,10 +780,10 @@ document.addEventListener('keydown', (e) => {
   const el = e.target;
   if (el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
   e.preventDefault();
-  if (!undo()) toast('Nothing to undo');
+  if (!undo()) toast(t('undo.nothing'));
 });
 
-confirmable($('clear-btn'), '✕ Clear all', 'Tap again to clear all', () => {
+confirmable($('clear-btn'), t('clear'), t('clear.confirm'), () => {
   state.trace = [];
   if (state.tracing) stopTracing();
   commit(() => {
@@ -700,13 +796,13 @@ confirmable($('clear-btn'), '✕ Clear all', 'Tap again to clear all', () => {
 });
 
 $('save-btn').addEventListener('click', () => {
-  const name = $('name-input').value.trim() || `Garden ${new Date().toLocaleDateString()}`;
+  const name = $('name-input').value.trim() || t('garden.default', { date: fmtDate(Date.now()) });
   const list = loadSaved();
   const existing = list.find((g) => g.name === name);
   const entry = { id: existing?.id ?? newId(), name, areas: snapshot().areas, savedAt: Date.now() };
   const next = existing ? list.map((g) => (g.id === entry.id ? entry : g)) : [entry, ...list];
-  if (storeSaved(next)) toast(`Saved “${name}”`);
-  else toast('Could not save: browser storage is unavailable', 5000);
+  if (storeSaved(next)) toast(t('save.done', { name }));
+  else toast(t('save.failed'), 5000);
   renderSaved();
 });
 
@@ -723,6 +819,9 @@ $('export-btn').addEventListener('click', () => {
         role: a.subtract ? 'subtract' : 'add',
         area_m2: Math.round(stats.area * 100) / 100,
         perimeter_m: Math.round(stats.perimeter * 100) / 100,
+        ...(a.parcel
+          ? { cadastre_parcel: a.parcel.id, cadastre_label: a.parcel.label, cadastre_commune: a.parcel.commune, cadastre_contenance_m2: a.parcel.contenance }
+          : {}),
       },
       geometry: { type: 'Polygon', coordinates: [[...a.vertices, a.vertices[0]].map((p) => [p.lng, p.lat])] },
     }));
@@ -750,18 +849,27 @@ $('units').addEventListener('change', (e) => {
   renderSaved();
 });
 
+// Switching language reloads the page so every label is rebuilt cleanly.
+$('lang').value = getLang();
+$('lang').addEventListener('change', (e) => {
+  savePrefs({ ...loadPrefs(), lang: e.target.value });
+  const url = new URL(location.href);
+  url.searchParams.set('lang', e.target.value);
+  location.replace(url);
+});
+
 $('locate-btn').addEventListener('click', () => {
   if (gps.last && gps.running) {
     map.setView([gps.last.lat, gps.last.lng], Math.max(map.getZoom(), 19));
     return;
   }
-  if (!('geolocation' in navigator)) return toast('Geolocation is not supported here');
-  toast('Finding you…');
+  if (!('geolocation' in navigator)) return toast(t('geo.unsupported'));
+  toast(t('geo.finding'));
   navigator.geolocation.getCurrentPosition(
     (pos) => map.setView([pos.coords.latitude, pos.coords.longitude], 19),
     (err) => {
       if (err.code === 1) openLocationHelp('denied');
-      else toast('Could not get your location', 4000);
+      else toast(t('geo.failed'), 4000);
     },
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
   );
@@ -788,15 +896,18 @@ map.getContainer().append(imageryBar); // keeps it over the map on desktop too
 L.DomEvent.disableClickPropagation(imageryBar); // don't add draw points through the bar
 L.DomEvent.disableScrollPropagation(imageryBar);
 
-const monthYear = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' });
+const monthYear = (ms) => fmtDate(ms, { month: 'short', year: 'numeric', timeZone: 'UTC' });
 
 function imageryLabel(c, i) {
   if (!c.captureDate) {
-    const when = `${i === 0 ? 'Latest' : 'Photo'}, published ${monthYear(Date.parse(c.releaseDate))}`;
-    return c.pending ? `${when} · date loading…` : when;
+    const when = t('imagery.published', { latest: i === 0, date: monthYear(Date.parse(c.releaseDate)) });
+    return c.pending ? `${when} · ${t('imagery.dateLoading')}` : when;
   }
-  const parts = [monthYear(c.captureDate), `${c.season.name}${c.season.leafOff ? ' 🍂' : ''}`];
-  if (c.resolution) parts.push(`${c.resolution < 1 ? Number(c.resolution.toFixed(2)) : c.resolution} m/px`);
+  const parts = [monthYear(c.captureDate), `${t(`season.${c.season.name}`)}${c.season.leafOff ? ' 🍂' : ''}`];
+  if (c.resolution) {
+    const res = c.resolution < 1 ? Number(c.resolution.toFixed(2)) : c.resolution;
+    parts.push(`${res.toLocaleString(numberLocale())} m/px`);
+  }
   if (c.provider) parts.push(c.provider);
   return parts.join(' · ');
 }
@@ -839,8 +950,8 @@ function showImagery(i) {
     imagery.layer = L.tileLayer(c.url, {
       maxZoom: 22,
       maxNativeZoom: 19,
-      zIndex: 5, // above the base layers
-      attribution: 'Archive imagery: Esri World Imagery Wayback',
+      zIndex: 5, // above the base layers, below the cadastre
+      attribution: t('imagery.attribution'),
     }).addTo(map);
   }
   refreshImageryControls();
@@ -861,7 +972,7 @@ function closeImagery() {
 async function loadImagery({ keepRelease } = {}) {
   if (imagery.loading) return;
   if (map.getZoom() < 15) {
-    toast('Zoom in to your garden first, then tap 🗓', 4000);
+    toast(t('imagery.zoomIn'), 4000);
     return;
   }
   const gen = ++imagery.gen;
@@ -870,16 +981,16 @@ async function loadImagery({ keepRelease } = {}) {
   const center = map.getCenter();
   const { lat, lng } = center;
   const z = Math.min(19, Math.round(map.getZoom()));
-  if (!keepRelease) toast('Looking for older photos of this spot…', 15000);
+  if (!keepRelease) toast(t('imagery.looking'), 15000);
 
   // Phase 1: which distinct photos exist here.
   let releases;
   try {
     releases = await findLocalReleases(lat, lng, z, {
-      onProgress: (n) => n && !keepRelease && gen === imagery.gen && toast(`Looking for older photos… ${n} found`, 15000),
+      onProgress: (n) => n && !keepRelease && gen === imagery.gen && toast(t('imagery.lookingN', { n }), 15000),
     });
   } catch (err) {
-    if (gen === imagery.gen) toast(`Could not reach the imagery archive (${err.message})`, 5000);
+    if (gen === imagery.gen) toast(t('imagery.error', { msg: err.message }), 5000);
     return;
   } finally {
     if (gen === imagery.gen) {
@@ -889,7 +1000,7 @@ async function loadImagery({ keepRelease } = {}) {
   }
   if (gen !== imagery.gen) return; // closed or superseded meanwhile
   if (!releases.length) {
-    toast('No archive imagery found for this spot', 4000);
+    toast(t('imagery.none'), 4000);
     return;
   }
 
@@ -903,7 +1014,7 @@ async function loadImagery({ keepRelease } = {}) {
   $('imagery-btn').classList.add('on');
   const keep = keepRelease ? imagery.list.findIndex((c) => c.release === keepRelease) : -1;
   showImagery(Math.max(0, keep));
-  if (!keepRelease) toast(`${releases.length} photos of this spot. Use ◀ ▶ to flip through them (loading dates…)`, 5000);
+  if (!keepRelease) toast(t('imagery.count', { n: releases.length }), 5000);
 
   // Phase 2: capture dates and seasons, filled in as they arrive.
   await loadCaptureInfo(releases, lat, lng, z, {
@@ -921,9 +1032,9 @@ async function loadImagery({ keepRelease } = {}) {
   if (leafOff >= 0 && !imagery.touched) {
     // A leaf-off photo is what usually reveals the boundary: switch to it.
     showImagery(leafOff);
-    toast(`Showing ${monthYear(imagery.list[leafOff].captureDate)} (leaf-off 🍂). ${visible.length} photos — ◀ ▶ to compare.`, 6000);
+    toast(t('imagery.showingLeafOff', { date: monthYear(imagery.list[leafOff].captureDate), n: visible.length }), 6000);
   } else if (leafOff < 0) {
-    toast(`${visible.length} photos here, none from the leaf-off season.`, 5000);
+    toast(t('imagery.noLeafOff', { n: visible.length }), 5000);
   }
 }
 
@@ -939,8 +1050,9 @@ $('img-older').addEventListener('click', () => pickImagery(visibleIndex(imagery.
 $('img-newer').addEventListener('click', () => pickImagery(visibleIndex(imagery.index, -1)));
 $('img-select').addEventListener('change', (e) => pickImagery(Number(e.target.value)));
 
-// Different places have different archives: refresh the list after a big pan.
 map.on('moveend', () => {
+  updateParcelAvailability();
+  // Different places have different archives: refresh the list after a big pan.
   if (imageryBar.hidden || imagery.loading || !imagery.center || map.getZoom() < 15) return;
   if (map.distance(map.getCenter(), imagery.center) > 400) {
     loadImagery({ keepRelease: imagery.list[imagery.index]?.release });
@@ -954,9 +1066,11 @@ new ResizeObserver(() => map.invalidateSize()).observe($('map'));
 persist(); // writes migrated/normalised draft back
 render();
 renderSaved();
+if (allVertices().length) fitTo(allVertices());
+updateParcelAvailability();
 if (allVertices().length) {
-  fitTo(allVertices());
-  toast('Restored your last outline');
+  toast(t('boot.restored'));
 } else {
-  toast('Choose “Walk the edge” or “Draw on map” to start', 4000);
+  const c = map.getCenter();
+  toast(t(getLang() === 'fr' || inFrance(c.lat, c.lng) ? 'boot.startFr' : 'boot.start'), 4000);
 }

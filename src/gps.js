@@ -17,7 +17,7 @@ export class GpsTracker {
   start() {
     if (this.running) return;
     if (!('geolocation' in navigator)) {
-      this.onError?.(new Error('This browser has no GPS / geolocation support.'));
+      this.onError?.(Object.assign(new Error('This browser has no GPS / geolocation support.'), { code: 'unsupported' }));
       return;
     }
     this.watchId = navigator.geolocation.watchPosition(
@@ -61,8 +61,11 @@ export class GpsTracker {
         this.listeners.delete(listener);
         // Fall back to the latest fix if the device reported nothing new.
         if (!fixes.length && this.last && Date.now() - this.last.time < 10000) fixes.push(this.last);
-        if (!fixes.length) reject(new Error('No GPS fix received. Are you outdoors with location enabled?'));
+        if (!fixes.length) {
+          reject(Object.assign(new Error('No GPS fix received. Are you outdoors with location enabled?'), { code: 'no-fix' }));
+        }
         else resolve({ ...weightedAverage(fixes), samples: fixes.length });
+        return;
       }, durationMs);
     });
   }

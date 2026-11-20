@@ -35,14 +35,28 @@ export const newId = () => Date.now().toString(36) + Math.random().toString(36).
 
 const isPoint = (p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng);
 
-function cleanArea(a, i) {
+/** Cadastre parcel an area was imported from (France). */
+function cleanParcel(p) {
+  if (!p || typeof p !== 'object' || typeof p.id !== 'string') return undefined;
   return {
+    id: p.id,
+    label: typeof p.label === 'string' ? p.label : '',
+    commune: typeof p.commune === 'string' ? p.commune : null,
+    contenance: Number.isFinite(p.contenance) ? p.contenance : null,
+  };
+}
+
+function cleanArea(a, i) {
+  const area = {
     id: typeof a.id === 'string' && a.id ? a.id : newId(),
     name: typeof a.name === 'string' && a.name.trim() ? a.name : `Area ${i + 1}`,
     color: typeof a.color === 'string' ? a.color : null,
     subtract: Boolean(a.subtract),
     vertices: (Array.isArray(a.vertices) ? a.vertices : []).filter(isPoint),
   };
+  const parcel = cleanParcel(a.parcel);
+  if (parcel) area.parcel = parcel;
+  return area;
 }
 
 /** Accepts a list of areas, or a legacy bare vertex array. Always returns areas. */

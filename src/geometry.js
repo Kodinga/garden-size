@@ -222,20 +222,21 @@ const SQ_FT_PER_M2 = 10.7639104;
 const FT_PER_M = 3.2808399;
 const M2_PER_ACRE = 4046.8564224;
 
-const fmt = (n, digits) =>
-  n.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+const fmt = (n, digits, locale) =>
+  n.toLocaleString(locale, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 
-export function formatArea(m2, units = 'metric') {
+/** `locale` controls number formatting, e.g. 'en-US' → 1,234.5 and 'fr-FR' → 1 234,5. */
+export function formatArea(m2, units = 'metric', locale = 'en-US') {
   const ft2 = m2 * SQ_FT_PER_M2;
-  const m2Str = `${fmt(m2, m2 < 100 ? 1 : 0)} m²`;
-  const ft2Str = `${fmt(ft2, ft2 < 100 ? 1 : 0)} ft²`;
+  const m2Str = `${fmt(m2, m2 < 100 ? 1 : 0, locale)} m²`;
+  const ft2Str = `${fmt(ft2, ft2 < 100 ? 1 : 0, locale)} ft²`;
   if (units === 'imperial') {
-    return { main: ft2Str, sub: `${fmt(m2 / M2_PER_ACRE, 3)} acres · ${m2Str}` };
+    return { main: ft2Str, sub: `${fmt(m2 / M2_PER_ACRE, 3, locale)} acres · ${m2Str}` };
   }
-  return { main: m2Str, sub: `${fmt(m2 / 10000, 3)} ha · ${ft2Str}` };
+  return { main: m2Str, sub: `${fmt(m2 / 10000, 3, locale)} ha · ${ft2Str}` };
 }
 
-export function formatLength(m, units = 'metric') {
-  if (units === 'imperial') return `${fmt(m * FT_PER_M, 0)} ft`;
-  return `${fmt(m, m < 100 ? 1 : 0)} m`;
+export function formatLength(m, units = 'metric', locale = 'en-US') {
+  if (units === 'imperial') return `${fmt(m * FT_PER_M, 0, locale)} ft`;
+  return `${fmt(m, m < 100 ? 1 : 0, locale)} m`;
 }

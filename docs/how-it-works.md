@@ -30,6 +30,16 @@ Esri archives every version of its World Imagery basemap; there are about 200 re
 
 "Leaf-off" means November–March in the northern hemisphere and May–September in the southern. It is never flagged within the tropics.
 
+## Cadastre (France)
+
+`src/cadastre.js` uses IGN's Géoplateforme, which is free, needs no key and supports CORS.
+
+- **Parcel lines:** WMTS layer `CADASTRALPARCELS.PARCELLAIRE_EXPRESS`, style `PCI vecteur`.
+- **Aerial photos:** WMTS layer `ORTHOIMAGERY.ORTHOPHOTOS`.
+- **Parcel under a tap:** WFS `GetFeature` on `CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle` with `CQL_FILTER=INTERSECTS(geom,POINT(lat lon))`. EPSG:4326 in WFS 2.0 uses lat/lon axis order. If that fails, the app falls back to `apicarto.ign.fr/api/cadastre/parcelle`.
+
+A parcel can be a MultiPolygon, and the largest piece is used. `contenance` is the official tax area. It typically differs from the area computed from the outline by about 1% (for example, 722 m² official against 717 m² computed for a test parcel in Villeurbanne).
+
 ## Corner averaging
 
 **Mark corner** collects every `watchPosition` fix for 5 s and computes an average weighted by `1/accuracy²`. The reported accuracy of the averaged point is the weighted mean of the readings' accuracies, not the much smaller statistical combination. GPS errors are strongly correlated over a few seconds, so the smaller figure would be falsely optimistic.

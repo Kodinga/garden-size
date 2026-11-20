@@ -150,7 +150,8 @@ button.recording { background: var(--poor); color: #2b0600; font-weight: 600; bo
 .save-row button { flex: 0 0 auto; }
 
 .modes { display: flex; gap: 8px; }
-.modes .mode { flex: 1; font-weight: 600; }
+.modes .mode { flex: 1; font-weight: 600; padding: 10px 6px; }
+.modes .mode[hidden] { display: none; }
 .modes .mode[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 
 .controls {
