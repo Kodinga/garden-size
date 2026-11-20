@@ -33,6 +33,14 @@
       <button id="img-close" data-i18n-title="imagery.close" title="Back to latest imagery" aria-label="Back to latest imagery">✕</button>
     </div>
 
+    <form id="search" role="search" autocomplete="off">
+      <input id="search-input" type="search" enterkeyhint="search" spellcheck="false"
+        role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="search-results"
+        data-i18n-placeholder="search.placeholder" placeholder="Search an address"
+        data-i18n-title="search.label" aria-label="Search an address" />
+      <ul id="search-results" role="listbox" hidden></ul>
+    </form>
+
     <div id="toast" role="status" aria-live="polite"></div>
 
     <dialog id="loc-help" aria-labelledby="loc-help-title">

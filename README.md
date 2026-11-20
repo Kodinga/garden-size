@@ -10,6 +10,7 @@ No build step, no backend and no tracking. Everything stays in your browser's lo
   - **Mark corner:** stand on a corner and the app averages about 5 s of GPS readings, weighted by accuracy. Best for straight-sided gardens.
   - **Trace:** records your path as you walk. Fixes worse than ±15 m are ignored, and jitter is removed with Douglas–Peucker simplification. Best for curved borders.
   - Live GPS accuracy indicator, and the screen stays awake while you walk (Wake Lock API).
+- **Address search:** type an address in the box at the top of the map. French addresses are suggested as you type (IGN geocoder, Base Adresse Nationale). Elsewhere, press Enter to search with OpenStreetMap Nominatim.
 - **Draw on map:** tap corners on Esri satellite imagery (OpenStreetMap is also available).
 - **Multiple areas:** add as many areas as you like (lawn, beds, a separate front garden), each with its own name and colour. The big number is the total. Mark an area **−** to subtract it, for example a shed or patio drawn inside the lawn. Tap an area on the map or in the list to select it. New points always go into the selected area.
 - **Imagery dates:** trees hiding the boundary? Tap 🗓 on the map to flip through every archived satellite photo of that spot (Esri World Imagery Wayback, 2014 onwards). Each photo shows its capture date, season, resolution and source. Winter or early-spring photos are marked 🍂, and the app switches to the newest of them automatically, because bare trees usually reveal fences and hedges.

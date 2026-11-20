@@ -12,6 +12,7 @@ import { GpsTracker } from './gps.js';
 import { detectPlatform, locationHelp } from './location-help.js';
 import { findLocalReleases, loadCaptureInfo, describeCapture, captureKey } from './wayback.js';
 import { CADASTRE_TILE_URL, IGN_ORTHO_TILE_URL, IGN_ATTRIBUTION, inFrance, parcelAt } from './cadastre.js';
+import { suggest, search } from './geocode.js';
 import { detectLang, setLang, getLang, numberLocale, t, applyStatic } from './i18n.js';
 import { loadDraft, saveDraft, loadSaved, storeSaved, loadPrefs, savePrefs, newId } from './storage.js';
 
@@ -873,6 +874,171 @@ $('locate-btn').addEventListener('click', () => {
     },
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
   );
+});
+
+// ---------- Address search ----------
+// In France (French UI or map over France) the IGN geocoder suggests addresses
+// as you type. Elsewhere, Nominatim runs when the search is submitted.
+const searchForm = $('search');
+const searchInput = $('search-input');
+const searchList = $('search-results');
+map.getContainer().append(searchForm);
+L.DomEvent.disableClickPropagation(searchForm);
+L.DomEvent.disableScrollPropagation(searchForm);
+const searchState = { results: [], index: -1, seq: 0, controller: null, timer: 0, pin: null };
+const searchCredit = (results) => t(results[0]?.source === 'osm' ? 'search.creditOsm' : 'search.creditFr');
+
+const searchInFrance = () => {
+  const c = map.getCenter();
+  return getLang() === 'fr' || inFrance(c.lat, c.lng);
+};
+
+function searchItem(cls, text) {
+  const li = document.createElement('li');
+  li.className = cls;
+  li.textContent = text;
+  return li;
+}
+
+function showSearchResults(results, { note } = {}) {
+  searchState.results = results;
+  searchState.query = searchInput.value;
+  searchState.index = -1;
+  searchList.replaceChildren();
+  results.forEach((r, i) => {
+    const li = document.createElement('li');
+    li.role = 'option';
+    li.id = `search-opt-${i}`;
+    li.setAttribute('aria-selected', 'false');
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = r.label;
+    const sub = document.createElement('span');
+    sub.className = 'sub';
+    sub.textContent = r.sub;
+    li.append(label, sub);
+    // pointerdown + preventDefault keeps focus in the input until the pick is done
+    li.addEventListener('pointerdown', (e) => e.preventDefault());
+    li.addEventListener('click', () => pickSearchResult(r));
+    searchList.append(li);
+  });
+  if (note) searchList.append(searchItem('note', note));
+  if (results.length) searchList.append(searchItem('credit', searchCredit(results)));
+  const open = searchList.childElementCount > 0;
+  searchList.hidden = !open;
+  searchInput.setAttribute('aria-expanded', String(open));
+  searchInput.removeAttribute('aria-activedescendant');
+}
+
+function hideSearchResults() {
+  searchList.hidden = true;
+  searchInput.setAttribute('aria-expanded', 'false');
+  searchInput.removeAttribute('aria-activedescendant');
+}
+
+function highlightSearch(i) {
+  const items = searchList.querySelectorAll('[role=option]');
+  if (!items.length) return;
+  searchState.index = (i + items.length) % items.length;
+  items.forEach((li, j) => li.setAttribute('aria-selected', String(j === searchState.index)));
+  const cur = items[searchState.index];
+  searchInput.setAttribute('aria-activedescendant', cur.id);
+  cur.scrollIntoView({ block: 'nearest' });
+}
+
+/** Starts a new request, cancelling the previous one. Returns null if superseded. */
+async function runSearch(fn) {
+  searchState.controller?.abort();
+  const controller = new AbortController();
+  searchState.controller = controller;
+  const seq = ++searchState.seq;
+  try {
+    const results = await fn(controller.signal);
+    return seq === searchState.seq ? results : null;
+  } catch (err) {
+    if (err?.name === 'AbortError' || seq !== searchState.seq) return null;
+    throw err;
+  }
+}
+
+function pickSearchResult(r) {
+  hideSearchResults();
+  // IGN: "24 Rue Anatole France, 69100 Villeurbanne"; OSM's full display name is too long for the box.
+  searchInput.value = r.source === 'ign' ? [r.label, r.sub.split(' · ')[0]].filter(Boolean).join(', ') : r.label;
+  searchInput.blur(); // closes the phone keyboard
+  if (r.bounds && r.zoom < 19) map.fitBounds(r.bounds, { maxZoom: 18 });
+  else map.setView([r.lat, r.lng], r.zoom);
+  searchState.pin?.remove();
+  searchState.pin = L.circleMarker([r.lat, r.lng], {
+    radius: 8,
+    color: '#fff',
+    weight: 2,
+    fillColor: '#ff7a00',
+    fillOpacity: 1,
+    interactive: false,
+  }).addTo(map);
+}
+
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchState.timer);
+  const q = searchInput.value;
+  if (!q.trim()) {
+    searchState.seq++;
+    searchState.controller?.abort();
+    searchState.pin?.remove();
+    searchState.pin = null;
+    return hideSearchResults();
+  }
+  if (!searchInFrance() || q.trim().length < 3) return hideSearchResults();
+  searchState.timer = setTimeout(async () => {
+    try {
+      const results = await runSearch((signal) => suggest(q, { near: map.getCenter(), signal }));
+      if (results === null || searchInput.value !== q) return;
+      showSearchResults(results, { note: results.length ? null : t('search.worldwide') });
+    } catch {
+      hideSearchResults(); // suggestions are best-effort; Enter still runs a full search
+    }
+  }, 250);
+});
+
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (searchList.hidden) return;
+    e.preventDefault();
+    highlightSearch(searchState.index + (e.key === 'ArrowDown' ? 1 : -1));
+  } else if (e.key === 'Escape') {
+    if (!searchList.hidden) hideSearchResults();
+    else searchInput.blur();
+  }
+});
+
+searchInput.addEventListener('focus', () => {
+  $('toast').classList.remove('show'); // it would sit over the suggestions
+  if (searchState.results.length && searchInput.value.trim()) showSearchResults(searchState.results);
+});
+searchInput.addEventListener('blur', () => setTimeout(hideSearchResults, 150));
+
+searchForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearTimeout(searchState.timer);
+  const q = searchInput.value.trim();
+  if (!q) return;
+  // A highlighted (or the only/first) suggestion for exactly this text wins.
+  if (!searchList.hidden && searchState.results.length && searchState.query === searchInput.value) {
+    return pickSearchResult(searchState.results[Math.max(0, searchState.index)]);
+  }
+  const france = searchInFrance();
+  showSearchResults([], { note: t('search.searching') });
+  try {
+    const results = await runSearch((signal) => search(q, { france, near: map.getCenter(), lang: getLang(), signal }));
+    if (results === null) return;
+    if (!results.length) return showSearchResults([], { note: t('search.none') });
+    if (results.length === 1) return pickSearchResult(results[0]);
+    showSearchResults(results);
+  } catch {
+    hideSearchResults();
+    toast(t('search.failed'), 4000);
+  }
 });
 
 // ---------- Imagery dates (Esri World Imagery Wayback) ----------

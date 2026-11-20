@@ -40,6 +40,15 @@ Esri archives every version of its World Imagery basemap; there are about 200 re
 
 A parcel can be a MultiPolygon, and the largest piece is used. `contenance` is the official tax area. It typically differs from the area computed from the outline by about 1% (for example, 722 m² official against 717 m² computed for a test parcel in Villeurbanne).
 
+## Address search
+
+`src/geocode.js` uses two geocoders.
+
+- **France** (French UI, or map centred over France): IGN Géoplateforme `data.geopf.fr/geocodage/search` with `autocomplete=1`, biased towards the map centre with `lat`/`lon`. Suggestions are requested 250 ms after the last keystroke, from 3 characters, and each new request aborts the previous one.
+- **Elsewhere:** OpenStreetMap Nominatim. Its usage policy forbids autocomplete, so it is only called when the search is submitted. A French search that IGN can't match (for example a Belgian address) also falls back to Nominatim.
+
+Addresses zoom to 19, streets to 17 and towns to 14. An orange dot marks the result.
+
 ## Corner averaging
 
 **Mark corner** collects every `watchPosition` fix for 5 s and computes an average weighted by `1/accuracy²`. The reported accuracy of the averaged point is the weighted mean of the readings' accuracies, not the much smaller statistical combination. GPS errors are strongly correlated over a few seconds, so the smaller figure would be falsely optimistic.

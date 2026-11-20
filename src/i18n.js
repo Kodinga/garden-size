@@ -151,6 +151,15 @@ const en = {
   'parcel.added': ({ label, commune, area }) => `Parcel ${label}${commune ? ` (${commune})` : ''} added — official area ${area}`,
   'parcel.already': ({ name }) => `${name} is already in your list`,
 
+  'search.placeholder': 'Search an address',
+  'search.label': 'Search an address',
+  'search.searching': 'Searching…',
+  'search.none': 'No address found',
+  'search.failed': 'Address search failed, check your connection',
+  'search.worldwide': 'Press Enter to search worldwide',
+  'search.creditFr': 'Addresses: IGN / BAN',
+  'search.creditOsm': 'Addresses: © OpenStreetMap',
+
   'boot.restored': 'Restored your last outline',
   'boot.start': 'Choose “Walk the edge” or “Draw on map” to start',
   'boot.startFr': 'Choose “Walk the edge”, “Draw on map” or “Parcel” to start',
@@ -297,6 +306,15 @@ const fr = {
   'parcel.added': ({ label, commune, area }) =>
     `Parcelle ${label}${commune ? ` (${commune})` : ''} ajoutée — contenance ${area}`,
   'parcel.already': ({ name }) => `${name} est déjà dans la liste`,
+
+  'search.placeholder': 'Rechercher une adresse',
+  'search.label': 'Rechercher une adresse',
+  'search.searching': 'Recherche…',
+  'search.none': 'Aucune adresse trouvée',
+  'search.failed': 'La recherche d’adresse a échoué, vérifiez votre connexion',
+  'search.worldwide': 'Appuyez sur Entrée pour chercher dans le monde entier',
+  'search.creditFr': 'Adresses : IGN / BAN',
+  'search.creditOsm': 'Adresses : © OpenStreetMap',
 
   'boot.restored': 'Dernier contour restauré',
   'boot.start': 'Choisissez « Parcourir », « Dessiner » ou « Cadastre » pour commencer',

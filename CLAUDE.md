@@ -12,6 +12,7 @@ Static web app for measuring garden area, either by walking the edge (GPS) or by
   - `storage.js`: localStorage helpers, guarded with try/catch
   - `i18n.js`: English and French strings. `t(key, params)` looks a string up, and `data-i18n*` attributes in `index.html` are filled by `applyStatic()`. Every key must exist in both languages; a test enforces this.
   - `cadastre.js`: French cadastre (IGN Géoplateforme). It provides the parcel tile layer, the IGN aerial photo layer, and `parcelAt()`, which tries WFS first and falls back to API Carto.
+  - `geocode.js`: address search. IGN autocomplete for France, Nominatim on submit elsewhere (its policy forbids autocomplete). `fetchJson` is injectable for tests.
   - `location-help.js`: per-device steps for unblocking location, in English and French
   - `wayback.js`: Esri World Imagery Wayback lookup, which lists the distinct archived photos at a point and their capture dates and seasons. `fetchJson` is injectable for tests.
 - `tests/`: `node:test` tests for `geometry.js`
