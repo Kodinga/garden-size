@@ -9,6 +9,7 @@ import {
   formatLength,
 } from './geometry.js';
 import { GpsTracker } from './gps.js';
+import { detectPlatform, locationHelp } from './location-help.js';
 import { findLocalReleases, loadCaptureInfo, describeCapture, captureKey } from './wayback.js';
 import { loadDraft, saveDraft, loadSaved, storeSaved, loadPrefs, savePrefs, newId } from './storage.js';
 
@@ -427,9 +428,20 @@ const gps = new GpsTracker({
     youDot.setLatLng(ll).addTo(map);
     youAccuracy.setLatLng(ll).setRadius(fix.acc).addTo(map);
 
-    const quality = fix.acc <= 5 ? 'good' : fix.acc <= 12 ? 'ok' : 'poor';
-    const label = quality === 'good' ? 'good' : quality === 'ok' ? 'fair' : 'poor — wait or move into the open';
-    setGpsStatus(`GPS ±${fix.acc.toFixed(1)} m (${label})`, quality);
+    if (fix.acc > APPROXIMATE_ACCURACY) {
+      // Hundreds of metres: the OS is only giving "approximate" location.
+      setGpsStatus(`Approximate location only (±${Math.round(fix.acc)} m) — Precise Location is off`, 'poor');
+      showLocationHelpButton('approximate');
+      if (!state.warnedApproximate) {
+        state.warnedApproximate = true;
+        openLocationHelp('approximate');
+      }
+    } else {
+      const quality = fix.acc <= 5 ? 'good' : fix.acc <= 12 ? 'ok' : 'poor';
+      const label = quality === 'good' ? 'good' : quality === 'ok' ? 'fair' : 'poor — wait or move into the open';
+      setGpsStatus(`GPS ±${fix.acc.toFixed(1)} m (${label})`, quality);
+      $('loc-help-btn').hidden = true;
+    }
 
     if (!state.centredOnFix) {
       state.centredOnFix = true;
@@ -446,15 +458,71 @@ const gps = new GpsTracker({
     }
   },
   onError(err) {
+    if (err.code === 1) {
+      setGpsStatus('Location is blocked for this site', 'poor');
+      showLocationHelpButton('denied');
+      openLocationHelp('denied');
+      return;
+    }
     const messages = {
-      1: 'Location permission denied. Allow location access for this site in your browser settings.',
-      2: 'Location unavailable. Try moving outdoors.',
+      2: 'Location unavailable. Check location is switched on, and try outdoors.',
       3: 'Waiting for GPS…',
     };
     const msg = messages[err.code] ?? err.message;
     setGpsStatus(msg, 'poor');
     if (err.code !== 3) toast(msg, 5000);
   },
+});
+
+// ---------- Location help ----------
+// Once a site is denied location, browsers never ask again; the user has to
+// find the switch in OS/browser settings. Show steps for their device.
+const APPROXIMATE_ACCURACY = 500; // metres; worse than this means "Precise Location" is off
+const helpDialog = $('loc-help');
+let helpReason = 'denied';
+
+function showLocationHelpButton(reason) {
+  helpReason = reason;
+  const btn = $('loc-help-btn');
+  btn.textContent = reason === 'approximate' ? 'How do I turn on precise location?' : 'How do I allow location?';
+  btn.hidden = false;
+}
+
+function openLocationHelp(reason = helpReason) {
+  helpReason = reason;
+  const p = detectPlatform(navigator.userAgent, navigator.maxTouchPoints, navigator.platform);
+  const help = locationHelp(p, location.host || 'this site');
+  $('loc-help-title').textContent = reason === 'approximate' ? 'Precise location is off' : 'Location is blocked';
+  $('loc-help-sub').textContent =
+    reason === 'approximate'
+      ? `Your phone is only sharing an approximate position, which is far too rough to measure a garden. Steps for ${help.title}:`
+      : `Your browser has blocked location for this site and won't ask again by itself. Steps for ${help.title}:`;
+  // Steps are static strings from location-help.js (only <b> markup), not user input.
+  $('loc-help-steps').innerHTML = help.steps.map((s) => `<li>${s}</li>`).join('');
+  if (helpDialog.open) return;
+  if (typeof helpDialog.showModal === 'function') helpDialog.showModal();
+  else helpDialog.setAttribute('open', '');
+}
+
+function closeLocationHelp() {
+  if (typeof helpDialog.close === 'function') helpDialog.close();
+  else helpDialog.removeAttribute('open');
+}
+
+$('loc-help-btn').addEventListener('click', () => openLocationHelp());
+$('loc-close').addEventListener('click', closeLocationHelp);
+$('loc-reload').addEventListener('click', () => location.reload());
+$('loc-retry').addEventListener('click', () => {
+  closeLocationHelp();
+  state.warnedApproximate = false;
+  if (state.mode === 'walk') {
+    gps.stop();
+    state.centredOnFix = false;
+    setGpsStatus('Starting GPS…');
+    gps.start();
+  } else {
+    $('locate-btn').click();
+  }
 });
 
 function startTracing() {
@@ -691,7 +759,10 @@ $('locate-btn').addEventListener('click', () => {
   toast('Finding you…');
   navigator.geolocation.getCurrentPosition(
     (pos) => map.setView([pos.coords.latitude, pos.coords.longitude], 19),
-    (err) => toast(err.code === 1 ? 'Location permission denied' : 'Could not get your location', 4000),
+    (err) => {
+      if (err.code === 1) openLocationHelp('denied');
+      else toast('Could not get your location', 4000);
+    },
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
   );
 });

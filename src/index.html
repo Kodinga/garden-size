@@ -34,6 +34,18 @@
 
     <div id="toast" role="status" aria-live="polite"></div>
 
+    <dialog id="loc-help" aria-labelledby="loc-help-title">
+      <h2 id="loc-help-title">Location is blocked</h2>
+      <p class="muted" id="loc-help-sub"></p>
+      <ol id="loc-help-steps"></ol>
+      <div class="row">
+        <button id="loc-retry" class="primary">Try again</button>
+        <button id="loc-reload">Reload page</button>
+        <button id="loc-close">Close</button>
+      </div>
+      <p class="muted">You can still measure without GPS: use <b>Draw on map</b>.</p>
+    </dialog>
+
     <section id="panel">
       <div class="stats">
         <div class="area-label" id="area-label" hidden></div>
@@ -60,6 +72,7 @@
 
       <div id="walk-controls" class="controls" hidden>
         <div id="gps-status" class="gps-status">GPS off</div>
+        <button id="loc-help-btn" class="help-btn" hidden>How do I allow location?</button>
         <div class="row">
           <button id="corner-btn" class="primary">📍 Mark corner</button>
           <button id="trace-btn">〰️ Start tracing</button>
